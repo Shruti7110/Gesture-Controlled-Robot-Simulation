@@ -9,6 +9,8 @@ from mediapipe.tasks.python import vision
 from robot_sim import SimpleRobotSim
 from hand_joystick import HandJoystick
 
+from performance_monitor import PerformanceMonitor
+from performance_logger import PerformanceLogger
 
 class GestureControlSystem:
 
@@ -35,20 +37,27 @@ class GestureControlSystem:
             "forward": 0,
             "turn": 0
         }
+        self.perf_monitor = PerformanceMonitor()
+        self.perf_logger = PerformanceLogger()
 
     def run_vision(self):
         """Simple vision thread - minimal UI for performance"""
     
-        print("=" * 60)
-        print("WAREHOUSE NAVIGATOR")
-        print("=" * 60)
-        print("Move hand UP/DOWN/LEFT/RIGHT to control robot")
-        print("Navigate to GREEN zone, avoid BOXES")
-        print("Press 'Q' to quit, 'R' to restart")
-        print("=" * 60)
+        # print("=" * 60)
+        # print("WAREHOUSE NAVIGATOR")
+        # print("=" * 60)
+        # print("Move hand UP/DOWN/LEFT/RIGHT to control robot")
+        # print("Navigate to GREEN zone, avoid BOXES")
+        # print("Press 'Q' to quit, 'R' to restart")
+        # print("=" * 60)
 
         cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)   # Lower resolution
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  # Lower resolution
+        cap.set(cv2.CAP_PROP_FPS, 30)            # Request 30 FPS
 
+        frame_skip_counter = 0
+        
         # Wait for camera
         for _ in range(10):
             if cap.isOpened():
@@ -66,6 +75,10 @@ class GestureControlSystem:
             success, frame = cap.read()
             if not success:
                 continue
+            
+            frame_skip_counter += 1
+            if frame_skip_counter % 2 != 0:
+                continue
 
             frame = cv2.flip(frame, 1)
             h, w, _ = frame.shape
@@ -78,6 +91,7 @@ class GestureControlSystem:
             )
 
             result = self.detector.detect(mp_image)
+            
 
             forward = 0
             turn = 0
@@ -93,6 +107,7 @@ class GestureControlSystem:
 
                 # Get commands
                 forward, turn = self.joystick.get_command(hand_landmarks)
+                self.perf_monitor.record_vision_frame()
 
             # Update command
             self.current_command = {
@@ -120,7 +135,23 @@ class GestureControlSystem:
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(frame, f"Time: {int(game_state['time_limit'] - game_state['elapsed_time'])}s", 
                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # Performance stats (vision FPS and control latency)
+            # stats = self.perf_monitor.get_stats_summary()
 
+            # cv2.putText(frame, f"FPS: {stats['vision_fps']}", 
+            #         (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+            # cv2.putText(frame, f"Latency: {stats['avg_latency_ms']}ms", 
+            #         (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+            # Color code latency (green <50ms, yellow <100ms, red >100ms)
+            # if stats['avg_latency_ms'] < 50:
+            #     color = (0, 255, 0)  # Green
+            # elif stats['avg_latency_ms'] < 100:
+            #     color = (0, 255, 255)  # Yellow
+            # else:
+            #     color = (0, 0, 255)  # Red
             # Game over message
             if not game_state["game_active"]:
                 if game_state["game_won"]:
@@ -157,6 +188,10 @@ class GestureControlSystem:
 
     def run_simulation(self):
         """Simulation thread"""
+        
+        frame_count = 0
+        last_report_time = time.time()
+        last_log_time = time.time()
 
         while self.running:
             
@@ -168,9 +203,24 @@ class GestureControlSystem:
             )
 
             self.robot_sim.step()
+            
+            # Record simulation performance
+            self.perf_monitor.record_sim_step()
+            
+            #  Log every 10 frames
+            frame_count += 1  # Increment counter each loop
+            current_time = time.time()
+            if current_time - last_log_time >= 1.0:
+                game_state = self.robot_sim.get_game_state()
+                self.perf_logger.log(self.perf_monitor, game_state)
+                last_log_time = current_time
+            
+            # Print report every 5 seconds
+            if current_time - last_report_time >= 5.0:
+                # self.perf_monitor.print_report()
+                last_report_time = current_time
 
-            time.sleep(0.01)
-
+            time.sleep(0.01)  # Sleep to reduce CPU usage
 
     def restart_game(self):
         """Restart the game"""
@@ -199,6 +249,8 @@ class GestureControlSystem:
             self.running = False
 
         finally:
+            # Close logger before robot
+            self.perf_logger.close()
             self.robot_sim.close()
             print("Thanks for playing!")
 

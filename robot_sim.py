@@ -116,10 +116,39 @@ class SimpleRobotSim:
         )
 
         # -------- OBSTACLES --------
-        for _ in range(num_obstacles):
+        placed_obstacles = 0
+        max_attempts = 100  # Prevent infinite loop
+        
+        while placed_obstacles < num_obstacles and max_attempts > 0:
+            max_attempts -= 1
+            
+            # Random position
             x = random.uniform(-3, 3)
             y = random.uniform(-3, 3)
-
+            
+            # ✅ CHECK 1: Not too close to robot start (0, 0)
+            dist_to_start = math.sqrt(x**2 + y**2)
+            if dist_to_start < 1.5:  # Keep 1.5m clear around start
+                continue
+            
+            # ✅ CHECK 2: Not too close to goal
+            dist_to_goal = math.sqrt((x - goal_x)**2 + (y - goal_y)**2)
+            if dist_to_goal < 1.2:  # Keep 1.2m clear around goal
+                continue
+            
+            # ✅ CHECK 3: Not too close to other obstacles
+            too_close = False
+            for other_box in self.obstacles:
+                other_pos, _ = p.getBasePositionAndOrientation(other_box)
+                dist = math.sqrt((x - other_pos[0])**2 + (y - other_pos[1])**2)
+                if dist < 1.0:  # Keep 1m spacing between obstacles
+                    too_close = True
+                    break
+            
+            if too_close:
+                continue
+            
+            # ✅ All checks passed - place obstacle
             size = random.choice([0.5, 0.7, 1.0])
             half = size / 2
 
@@ -138,8 +167,8 @@ class SimpleRobotSim:
             )
 
             self.obstacles.append(box)
-            # ✅ ADDED: Initialize cooldown for each obstacle
             self.collision_cooldown[box] = 0
+            placed_obstacles += 1
 
     # -------------------------------
     def update_velocity(self, forward, turn):
